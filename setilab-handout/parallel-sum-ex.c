@@ -48,6 +48,7 @@ void* worker(void* arg) {
   // work on based on my id
   int mystart = myid * blocksize;
   int myend   = 0;
+
   if (myid == (num_threads - 1)) { // last thread
     // the last thread will take care of the leftover
     // elements of the vector, in case num_threads doesn't
@@ -57,10 +58,10 @@ void* worker(void* arg) {
     // which will slow down the entire job. A better solution would split up
     // remainder work equally between threads...
     myend = vector_len;
-  } else {
+  } 
+  else {
     myend = (myid + 1) * blocksize;
   }
-
   // Now I sum that chunk and put the result in partial_sum
   partial_sum[myid] = 0.0;
   for (int i = mystart; i < myend; i++) {
