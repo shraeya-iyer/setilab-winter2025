@@ -25,7 +25,7 @@ band_scan: band_scan.c filter.h signal.h timing.h libfilter.a
 
 #
 # Your rule for p_band_scan will look like the following.  Note the use of the
-# -pthread option which is critical
+# -pthread option which is critical, USE O3 OPTIMIZATION IN MAKEFILE
 #
 # You could add p_band_scan to the "all:" rule above so it runs by default
 #

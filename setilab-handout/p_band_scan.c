@@ -7,12 +7,26 @@
 #include "signal.h"
 #include "timing.h"
 #include "pthread.h"
-#include "parallel-sum-ex.c"
 
 #define MAXWIDTH 40 // max width of printed bar graphs
 #define THRESHOLD 2.0 // signal power threshold multiplier for WOW detection
 #define ALIENS_LOW  50000.0 // lower bound for alien signal frequency range
 #define ALIENS_HIGH 150000.0 // upper bound for alien signal frequency range
+
+// global variables so that worker function can access them, will be actually set in analyze signal before worker is called
+signal* sig;
+int filter_order;
+int num_bands;
+double* lb;
+double* ub;
+int num_threads;
+int num_processors;
+pthread_t* tid; // thread id
+double bandwidth;
+double* partial_results; 
+double* filter_coeffs;
+double* band_power;
+
 
 // Prints usage instructions for the program
 void usage() {
@@ -65,9 +79,13 @@ void remove_dc(double* data, int num) {
 }
 
 // Function run by each thread
+// signal with alien is signal 2
+// questions
+  // if you initialize tid inside main function how can you use it in worker? how can you use things in worker when we can't add more args?
 void* worker(void* arg) {
-  long myid     = (long)arg;
-  int blocksize = vector_len / num_threads; // note: floor
+  long myid = (long)arg;
+  int blocksize = num_bands / num_threads; // note: floor
+  // initialize filter coefficients and band power array
 
   // put ourselves on the desired processor
   cpu_set_t set;
@@ -81,7 +99,7 @@ void* worker(void* arg) {
   // This figures out the chunk of the vector I should
   // work on based on my id
   int mystart = myid * blocksize;
-  int myend   = 0;
+  int myend = (myid + 1) * blocksize;
 
   if (myid == (num_threads - 1)) { // last thread
     // the last thread will take care of the leftover
@@ -92,15 +110,30 @@ void* worker(void* arg) {
     // which will slow down the entire job. A better solution would split up
     // remainder work equally between threads...
         // TODO maybe use binary tree approach for accumulation
-    myend = vector_len;
+    myend = num_bands; // wouldn't you want to pass the rest of the bands not all num bands
   } 
   else {
     myend = (myid + 1) * blocksize;
   }
-  // Now I sum that chunk and put the result in partial_sum
-  partial_sum[myid] = 0.0;
-  for (int i = mystart; i < myend; i++) {
-    partial_sum[myid] += vector[i];
+
+  // loop through each frequency band and apply filtering
+  for (int band = mystart; band < myend; band++) {
+      // take contents of loop and spin it off into worker function, give each to seperate thread
+      
+      // Make the filter
+      generate_band_pass(sig->Fs,
+                          band * bandwidth + 0.0001, // keep within limits
+                          (band + 1) * bandwidth - 0.0001,
+                          filter_order,
+                          filter_coeffs);
+      hamming_window(filter_order,filter_coeffs); // apply hamming window to smooth edges
+
+      // Convolve signal with filter and compute band power
+      convolve_and_compute_power(sig->num_samples,
+                                  sig->data,
+                                  filter_order,
+                                  filter_coeffs,
+                                  &(band_power[band]));
   }
 
   // Done.  The master thread will sum up the partial sums
@@ -112,7 +145,7 @@ void* worker(void* arg) {
 int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, double* ub, int num_threads, int num_processors) {
 
     double Fc        = (sig->Fs) / 2; 
-    double bandwidth = Fc / num_bands; // bandwidth per filter band
+    bandwidth = Fc / num_bands; // bandwidth per filter band
 
     remove_dc(sig->data,sig->num_samples); // remove DC bias before analysis
 
@@ -126,10 +159,6 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
     double start = get_seconds();
     unsigned long long tstart = get_cycle_count();
 
-    // initialize filter coefficients and band power array
-    double filter_coeffs[filter_order + 1];
-    double band_power[num_bands];
-
     // first take example code and put it into thread code and make it work for one thread, then increase num threads
     // TODO: go through this loop and parallelize here
         // one index of the loop doesn't depend on another index of the loop's output, so this is good for parallelizing
@@ -140,31 +169,15 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
             // join thread: waits for a particular thread to finish, can't continue computation until all threads finish
             // can communicate between threads by reading from shared global variables, but make sure to write to seperate memory locs
 
-    pthread_t tid[num_threads];
+    // initialize threads
+    tid[num_threads];
     for (long i = 0; i < num_threads; i++) {
         pthread_create(&(tid[i]), NULL, worker, (void*)i);
     }
 
-    // loop through each frequency band and apply filtering
-    for (int band = 0; band < num_bands; band++) {
-        // take contents of loop and spin it off into worker function, give each to seperate thread
-        
-        // Make the filter
-        
-        generate_band_pass(sig->Fs,
-                            band * bandwidth + 0.0001, // keep within limits
-                            (band + 1) * bandwidth - 0.0001,
-                            filter_order,
-                            filter_coeffs);
-        hamming_window(filter_order,filter_coeffs); // apply hamming window to smooth edges
-
-        // Convolve signal with filter and compute band power
-        convolve_and_compute_power(sig->num_samples,
-                                    sig->data,
-                                    filter_order,
-                                    filter_coeffs,
-                                    &(band_power[band]));
-        
+    // join 
+    for (int j = 0; j < num_threads; j++) {
+      pthread_join(tid[j], NULL);
     }
     
     // stop measuring execution time
@@ -250,16 +263,21 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
 
 int main(int argc, char* argv[]) {
 
-  if (argc != 6) {
+  if (argc != 8) {
     usage();
     return -1;
   }
+  // put them in the argv values here 
 
   char sig_type    = toupper(argv[1][0]);
   char* sig_file   = argv[2];
   double Fs        = atof(argv[3]);
-  int filter_order = atoi(argv[4]);
-  int num_bands    = atoi(argv[5]);
+  filter_order = atoi(argv[4]);
+  num_bands    = atoi(argv[5]);
+  num_threads = atoi(argv[6]);
+  num_processors = atoi(argv[7]);
+  filter_coeffs = malloc(sizeof(double) * (filter_order + 1));
+  band_power = malloc(sizeof(double) * num_bands);
 
   assert(Fs > 0.0);
   assert(filter_order > 0 && !(filter_order & 0x1));
@@ -306,7 +324,7 @@ bands:    %d\n",
 
   double start = 0;
   double end   = 0;
-  if (analyze_signal(sig, filter_order, num_bands, &start, &end)) {
+  if (analyze_signal(sig, filter_order, num_bands, &start, &end, num_threads, num_processors)) {
     printf("POSSIBLE ALIENS %lf-%lf HZ (CENTER %lf HZ)\n", start, end, (end + start) / 2.0);
   } else {
     printf("no aliens\n");
