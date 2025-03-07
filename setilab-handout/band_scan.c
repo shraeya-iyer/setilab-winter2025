@@ -110,7 +110,7 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
   *lb = -1;
   *ub = -1;
 
-  for (int band = 0; band < num_bands; band++) {
+  for (int band = 0; band < num_bands; band++) { // calculating the range of frequences
     double band_low  = band * bandwidth + 0.0001;
     double band_high = (band + 1) * bandwidth - 0.0001;
 
