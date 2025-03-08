@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -7,6 +9,7 @@
 #include "signal.h"
 #include "timing.h"
 #include "pthread.h"
+#include <sched.h> 
 
 #define MAXWIDTH 40 // max width of printed bar graphs
 #define THRESHOLD 2.0 // signal power threshold multiplier for WOW detection
@@ -170,7 +173,6 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
             // can communicate between threads by reading from shared global variables, but make sure to write to seperate memory locs
 
     // initialize threads
-    tid[num_threads];
     for (long i = 0; i < num_threads; i++) {
         pthread_create(&(tid[i]), NULL, worker, (void*)i);
     }
@@ -278,6 +280,7 @@ int main(int argc, char* argv[]) {
   num_processors = atoi(argv[7]);
   filter_coeffs = malloc(sizeof(double) * (filter_order + 1));
   band_power = malloc(sizeof(double) * num_bands);
+  tid = malloc(sizeof(pthread_t) * num_threads);
 
   assert(Fs > 0.0);
   assert(filter_order > 0 && !(filter_order & 0x1));
@@ -296,7 +299,7 @@ bands:    %d\n",
 
   printf("Load or map file\n");
 
-  signal* sig;
+  //signal* sig;
   switch (sig_type) {
     case 'T':
       sig = load_text_format_signal(sig_file);
