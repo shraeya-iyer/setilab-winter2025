@@ -33,7 +33,7 @@ double* band_power;
 
 // Prints usage instructions for the program
 void usage() {
-  printf("usage: band_scan text|bin|mmap signal_file Fs filter_order num_bands\n");
+  printf("usage: band_scan text|bin|mmap signal_file Fs filter_order num_bands\nusage: p_band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads num_processors\n");
 }
 
 // computes the average power of a signal
@@ -119,6 +119,11 @@ void* worker(void* arg) {
     myend = (myid + 1) * blocksize;
   }
 
+  // allocate a local filter coefficient array for this thread - issue with data race where each thread was 
+  // overwriting the contents of the filter_coeffs array before they're used in the convolution call
+  // this is why the output was correct with one thread (no concurrent access) but wrong with 2, i think
+  double local_filter_coeffs[filter_order + 1];
+
   // loop through each frequency band and apply filtering
   for (int band = mystart; band < myend; band++) {
       // take contents of loop and spin it off into worker function, give each to seperate thread
@@ -128,14 +133,14 @@ void* worker(void* arg) {
                           band * bandwidth + 0.0001, // keep within limits
                           (band + 1) * bandwidth - 0.0001,
                           filter_order,
-                          filter_coeffs);
-      hamming_window(filter_order,filter_coeffs); // apply hamming window to smooth edges
+                          local_filter_coeffs);
+      hamming_window(filter_order,local_filter_coeffs); // apply hamming window to smooth edges
 
       // Convolve signal with filter and compute band power
       convolve_and_compute_power(sig->num_samples,
                                   sig->data,
                                   filter_order,
-                                  filter_coeffs,
+                                  local_filter_coeffs,
                                   &(band_power[band]));
   }
 
